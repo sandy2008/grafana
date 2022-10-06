@@ -30,19 +30,19 @@ func NewAnnotationHistorian(annotations annotations.Repository, dashboards dashb
 	}
 }
 
-func (h *AnnotationStateHistorian) RecordState(ctx context.Context, rule *ngmodels.AlertRule, labels data.Labels, evaluatedAt time.Time, currentData, previousData state.InstanceStateAndReason) {
-	h.log.Debug("alert state changed creating annotation", "alertRuleUID", rule.UID, "newState", currentData.String(), "oldState", previousData.String())
+func (h *AnnotationStateHistorian) RecordState(ctx context.Context, rule *ngmodels.AlertRule, state *state.State, previousData state.InstanceStateAndReason) {
+	h.log.Debug("alert state changed creating annotation", "alertRuleUID", rule.UID, "newState", state.DisplayName(), "oldState", previousData.String())
 
-	labels = removePrivateLabels(labels)
-	annotationText := fmt.Sprintf("%s {%s} - %s", rule.Title, labels.String(), currentData.String())
+	labels := removePrivateLabels(state.Labels)
+	annotationText := fmt.Sprintf("%s {%s} - %s", rule.Title, labels.String(), state.DisplayName())
 
 	item := &annotations.Item{
 		AlertId:   rule.ID,
 		OrgId:     rule.OrgID,
 		PrevState: previousData.String(),
-		NewState:  currentData.String(),
+		NewState:  state.DisplayName(),
 		Text:      annotationText,
-		Epoch:     evaluatedAt.UnixNano() / int64(time.Millisecond),
+		Epoch:     state.LastEvaluationTime.UnixNano() / int64(time.Millisecond),
 	}
 
 	dashUid, ok := rule.Annotations[ngmodels.DashboardUIDAnnotation]
