@@ -30,17 +30,17 @@ func NewAnnotationHistorian(annotations annotations.Repository, dashboards dashb
 	}
 }
 
-func (h *AnnotationStateHistorian) RecordState(ctx context.Context, rule *ngmodels.AlertRule, state *state.State, previousData state.InstanceStateAndReason) {
-	h.log.Debug("alert state changed creating annotation", "alertRuleUID", state.AlertRuleUID, "newState", state.DisplayName(), "oldState", previousData.String())
+func (h *AnnotationStateHistorian) RecordState(ctx context.Context, state state.ContextualState) {
+	h.log.Debug("alert state changed creating annotation", "alertRuleUID", state.AlertRuleUID, "newState", state.Formatted(), "oldState", state.PreviousFormatted())
 
 	labels := removePrivateLabels(state.Labels)
-	annotationText := fmt.Sprintf("%s {%s} - %s", rule.Title, labels.String(), state.DisplayName())
+	annotationText := fmt.Sprintf("%s {%s} - %s", state.RuleTitle, labels.String(), state.Formatted())
 
 	item := &annotations.Item{
-		AlertId:   rule.ID,
+		AlertId:   state.RuleID,
 		OrgId:     state.OrgID,
-		PrevState: previousData.String(),
-		NewState:  state.DisplayName(),
+		PrevState: state.PreviousFormatted(),
+		NewState:  state.Formatted(),
 		Text:      annotationText,
 		Epoch:     state.LastEvaluationTime.UnixNano() / int64(time.Millisecond),
 	}

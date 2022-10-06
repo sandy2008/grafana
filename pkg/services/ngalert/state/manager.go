@@ -3,7 +3,6 @@ package state
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net/url"
 	"time"
 
@@ -264,9 +263,16 @@ func (st *Manager) setNextState(ctx context.Context, alertRule *ngModels.AlertRu
 
 	st.cache.set(currentState)
 
-	shouldUpdateAnnotation := oldState != currentState.State || oldReason != currentState.StateReason
-	if shouldUpdateAnnotation {
-		go st.historian.RecordState(ctx, alertRule, currentState, InstanceStateAndReason{State: oldState, Reason: oldReason})
+	shouldRecordHistory := oldState != currentState.State || oldReason != currentState.StateReason
+	if shouldRecordHistory {
+		record := ContextualState{
+			State:               *currentState,
+			RuleID:              alertRule.ID,
+			RuleTitle:           alertRule.Title,
+			PreviousState:       oldState,
+			PreviousStateReason: oldReason,
+		}
+		go st.historian.RecordState(ctx, record)
 	}
 	return currentState
 }
@@ -363,20 +369,6 @@ func translateInstanceState(state ngModels.InstanceStateType) eval.State {
 	}
 }
 
-// This struct provides grouping of state with reason, and string formatting.
-type InstanceStateAndReason struct {
-	State  eval.State
-	Reason string
-}
-
-func (i InstanceStateAndReason) String() string {
-	s := fmt.Sprintf("%v", i.State)
-	if len(i.Reason) > 0 {
-		s += fmt.Sprintf(" (%v)", i.Reason)
-	}
-	return s
-}
-
 func (st *Manager) staleResultsHandler(ctx context.Context, evaluatedAt time.Time, alertRule *ngModels.AlertRule, states map[string]*State) []*State {
 	var resolvedStates []*State
 	allStates := st.GetStatesForRuleUID(alertRule.OrgID, alertRule.UID)
@@ -396,13 +388,22 @@ func (st *Manager) staleResultsHandler(ctx context.Context, evaluatedAt time.Tim
 			toDelete = append(toDelete, ngModels.AlertInstanceKey{RuleOrgID: s.OrgID, RuleUID: s.AlertRuleUID, LabelsHash: labelsHash})
 
 			if s.State == eval.Alerting {
-				previousState := InstanceStateAndReason{State: s.State, Reason: s.StateReason}
+				oldState := s.State
+				oldReason := s.StateReason
+
 				s.State = eval.Normal
 				s.StateReason = ngModels.StateReasonMissingSeries
 				s.EndsAt = evaluatedAt
 				s.Resolved = true
 				s.LastEvaluationTime = evaluatedAt
-				st.historian.RecordState(ctx, alertRule, s, previousState)
+				record := ContextualState{
+					State:               *s,
+					RuleID:              alertRule.ID,
+					RuleTitle:           alertRule.Title,
+					PreviousState:       oldState,
+					PreviousStateReason: oldReason,
+				}
+				st.historian.RecordState(ctx, record)
 				resolvedStates = append(resolvedStates, s)
 			}
 		}
