@@ -167,8 +167,8 @@ func (st *Manager) ProcessEvalResults(ctx context.Context, evaluatedAt time.Time
 	processedResults := make(map[string]*State, len(results))
 	for _, result := range results {
 		s := st.setNextState(ctx, alertRule, result, extraLabels)
-		states = append(states, s)
-		processedResults[s.CacheID] = s
+		states = append(states, s.State)
+		processedResults[s.State.CacheID] = s.State
 	}
 	resolvedStates := st.staleResultsHandler(ctx, evaluatedAt, alertRule, processedResults)
 	if len(states) > 0 {
@@ -210,7 +210,7 @@ func (st *Manager) maybeTakeScreenshot(
 }
 
 // Set the current state based on evaluation results
-func (st *Manager) setNextState(ctx context.Context, alertRule *ngModels.AlertRule, result eval.Result, extraLabels data.Labels) *State {
+func (st *Manager) setNextState(ctx context.Context, alertRule *ngModels.AlertRule, result eval.Result, extraLabels data.Labels) ContextualState {
 	currentState := st.cache.getOrCreate(ctx, st.log, alertRule, result, extraLabels, st.externalURL)
 
 	currentState.LastEvaluationTime = result.EvaluatedAt
@@ -263,18 +263,20 @@ func (st *Manager) setNextState(ctx context.Context, alertRule *ngModels.AlertRu
 
 	st.cache.set(currentState)
 
+	nextState := ContextualState{
+		State:               currentState,
+		RuleID:              alertRule.ID,
+		RuleTitle:           alertRule.Title,
+		PreviousState:       oldState,
+		PreviousStateReason: oldReason,
+	}
+
 	shouldRecordHistory := oldState != currentState.State || oldReason != currentState.StateReason
 	if shouldRecordHistory {
-		record := ContextualState{
-			State:               *currentState,
-			RuleID:              alertRule.ID,
-			RuleTitle:           alertRule.Title,
-			PreviousState:       oldState,
-			PreviousStateReason: oldReason,
-		}
-		go st.historian.RecordState(ctx, record)
+
+		go st.historian.RecordState(ctx, nextState)
 	}
-	return currentState
+	return nextState
 }
 
 func (st *Manager) GetAll(orgID int64) []*State {
@@ -397,7 +399,7 @@ func (st *Manager) staleResultsHandler(ctx context.Context, evaluatedAt time.Tim
 				s.Resolved = true
 				s.LastEvaluationTime = evaluatedAt
 				record := ContextualState{
-					State:               *s,
+					State:               s,
 					RuleID:              alertRule.ID,
 					RuleTitle:           alertRule.Title,
 					PreviousState:       oldState,
