@@ -40,10 +40,10 @@ func (h *AnnotationStateHistorian) recordStatesSync(ctx context.Context, states 
 		h.log.Debug("alert state changed creating annotation", "alertRuleUID", state.AlertRuleUID, "newState", state.Formatted(), "oldState", state.PreviousFormatted())
 
 		labels := removePrivateLabels(state.Labels)
-		annotationText := fmt.Sprintf("%s {%s} - %s", state.RuleTitle, labels.String(), state.Formatted())
+		annotationText := fmt.Sprintf("%s {%s} - %s", state.Rule.Title, labels.String(), state.Formatted())
 
 		item := annotations.Item{
-			AlertId:   state.RuleID,
+			AlertId:   state.Rule.ID,
 			OrgId:     state.OrgID,
 			PrevState: state.PreviousFormatted(),
 			NewState:  state.Formatted(),
