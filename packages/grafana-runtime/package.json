@@ -39,7 +39,7 @@
     "@grafana/data": "9.3.0-pre",
     "@grafana/e2e-selectors": "9.3.0-pre",
     "@grafana/ui": "9.3.0-pre",
-    "@sentry/browser": "6.19.7",
+    "@sentry/browser": "7.16.0",
     "history": "4.10.1",
     "lodash": "4.17.21",
     "rxjs": "7.5.6",
