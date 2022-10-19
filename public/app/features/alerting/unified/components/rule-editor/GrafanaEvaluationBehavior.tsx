@@ -4,6 +4,7 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { RegisterOptions, useFormContext } from 'react-hook-form';
 
 import { durationToMilliseconds, GrafanaTheme2, parseDuration, SelectableValue } from '@grafana/data';
+import { secondsToHms } from '@grafana/data/src/datetime/rangeutil';
 import {
   Button,
   Card,
@@ -44,6 +45,13 @@ import { checkForPathSeparator } from './util';
 
 
 const MIN_TIME_RANGE_STEP_S = 10; // 10 seconds
+
+const getIntervalForGroup = (promRules: RuleNamespace[], group: string, folder: string) => {
+  const folderObj = promRules.find((ruleNameSpace) => ruleNameSpace.name === folder);
+  const groupObj = folderObj?.groups.find((ruleGroup) => ruleGroup.name === group);
+  const interval = groupObj?.interval ?? MINUTE;
+  return interval;
+};
 
 const useGetGroups = (groupfoldersForGrafana: AsyncRequestState<RuleNamespace[]>, folderName: string) => {
   const groupOptions = useMemo(() => {
@@ -97,6 +105,7 @@ const forValidationOptions = (evaluateEvery: string): RegisterOptions => ({
     }
   },
 });
+
 const useRuleFolderFilter = (existingRuleForm: RuleForm | null) => {
   const isSearchHitAvailable = useCallback(
     (hit: DashboardSearchHit) => {
@@ -145,8 +154,11 @@ const useGetGroupOptionsFromFolder = (folderTilte: string) => {
   const groupOptions: Array<SelectableValue<string>> = mapGroupsToOptions(
     useGetGroups(groupfoldersForGrafana, folderTilte)
   );
-  return groupOptions;
+  const groupsForFolder = groupfoldersForGrafana?.result ?? [];
+  return { groupOptions, groupsForFolder };
 };
+
+const MINUTE = 60;
 
 function FolderAndGroup({ initialFolder }: FolderAndGroupProps) {
   const {
@@ -164,7 +176,7 @@ function FolderAndGroup({ initialFolder }: FolderAndGroupProps) {
   const [selectedGroup, setSelectedGroup] = useState(group);
   const initialRender = useRef(true);
 
-  const groupOptions = useGetGroupOptionsFromFolder(folder?.title ?? '');
+  const { groupOptions, groupsForFolder } = useGetGroupOptionsFromFolder(folder?.title ?? '');
 
   useEffect(() => {
     dispatch(fetchAllPromRulesAction());
@@ -232,6 +244,7 @@ function FolderAndGroup({ initialFolder }: FolderAndGroupProps) {
           }}
         />
       </Field>
+
       <Field
         label="Group"
         data-testid="group-picker"
@@ -245,11 +258,14 @@ function FolderAndGroup({ initialFolder }: FolderAndGroupProps) {
             <SelectWithAdd
               {...field}
               options={groupOptions}
+              getOptionLabel={(option: SelectableValue<string>) =>
+                `${option.label} -- ${secondsToHms(
+                  getIntervalForGroup(groupsForFolder ?? [], option.label ?? '', folder?.title ?? '')
+                )}`
+              }
               width={42}
-              custom={false}
               value={selectedGroup}
               onChange={(value: string) => {
-                console.log('changing dins', value);
                 field.onChange(value);
                 setSelectedGroup(value);
               }}
@@ -274,10 +290,30 @@ function EvaluationIntervalInput({ initialFolder }: { initialFolder: RuleForm | 
     register,
     formState: { errors },
     watch,
+    setValue,
   } = useFormContext<RuleFormValues>();
 
   const group = watch('group');
+  const folder = watch('folder');
   const evaluateEveryId = 'eval-every-input';
+  const evaluateEvery = watch('evaluateEvery');
+  const alertName = watch('name');
+  const promRules = useUnifiedAlertingSelector((state) => state.promRules);
+  const groupfoldersForGrafana = promRules[GRAFANA_RULES_SOURCE_NAME];
+
+  //const [evaluateEveryChanged, setEvaluateEveryChanged]= useState(false)
+
+  const someRulesBelongToThisGroup = (
+    currentRule: string,
+    promRules: RuleNamespace[],
+    group: string,
+    folder_: string
+  ) => {
+    const folderObj = promRules.find((ruleNameSpace) => ruleNameSpace.name === folder_);
+    const groupObj = folderObj?.groups.find((ruleGroup) => ruleGroup.name === group);
+    const rules = groupObj?.rules ?? [];
+    return rules.find((rule) => rule.name !== currentRule);
+  };
 
   const onBlur = () => setEditInterval(false);
   const evaluateEveryValidationOptions: RegisterOptions = {
@@ -302,8 +338,23 @@ function EvaluationIntervalInput({ initialFolder }: { initialFolder: RuleForm | 
   };
 
   useEffect(() => {
+    group &&
+      folder &&
+      setValue(
+        'evaluateEvery',
+        secondsToHms(getIntervalForGroup(groupfoldersForGrafana?.result ?? [], group, folder?.title ?? ''))
+      );
+  }, [group, folder, groupfoldersForGrafana?.result, setValue]);
+
+  // useEffect(() => setEvaluateEveryChanged(false), [folder, group])
+
+  useEffect(() => {
     editInterval && setFocus('evaluateEvery');
   }, [editInterval, setFocus]);
+
+  const intervalHasChanged =
+    secondsToHms(getIntervalForGroup(groupfoldersForGrafana?.result ?? [], group, folder?.title ?? '')) !==
+    evaluateEvery;
 
   return (
     <div>
@@ -316,40 +367,66 @@ function EvaluationIntervalInput({ initialFolder }: { initialFolder: RuleForm | 
             Click on 'Edit group behaviour' button to edit this group value.`}
         </Card.Meta>
         <Card.Actions>
-          <div className={styles.flexRow}>
-            <div className={styles.evaluateLabel}>{`Alert rules in '${group}' are evaluated every`}</div>
-            <Field
-              className={styles.inlineField}
-              error={errors.evaluateEvery?.message}
-              invalid={!!errors.evaluateEvery}
-              validationMessageHorizontalOverflow={true}
+          {intervalHasChanged &&
+          !editInterval &&
+          someRulesBelongToThisGroup(alertName, groupfoldersForGrafana?.result ?? [], group, folder?.title ?? '') ? (
+            <>
+              <div className={styles.intervalChangedLabel}>
+                <Icon name="exclamation-triangle" size="xs" className={cx('text-warning', styles.warningIcon)} />
+                {`More alert rules belong to this group.You are going to update evaluation interval for group '${group}' with this new value: `}
+                <span className={cx('text-warning')}>{evaluateEvery}</span>
+              </div>
+              <div className={cx('text-warning')}>
+                You should review the For duration, for all alerts that belong to this group
+              </div>
+            </>
+          ) : (
+            intervalHasChanged &&
+            !editInterval && (
+              <div className={styles.intervalChangedLabel}>
+                {`Evaluation interval for group '${group}' will be updated with: `}
+                <span className={cx('text-warning')}>{evaluateEvery}</span>
+              </div>
+            )
+          )}
+
+          {!editInterval && (
+            <Button
+              icon={editInterval ? 'exclamation-circle' : 'edit'}
+              type="button"
+              variant="secondary"
+              onClick={() => {
+                setEditInterval(true);
+              }}
             >
-              <Input
-                id={evaluateEveryId}
-                width={8}
-                {...register('evaluateEvery', evaluateEveryValidationOptions)}
-                readOnly={!editInterval}
-                onBlur={onBlur}
-                className={styles.evaluateInput}
-              />
-            </Field>
-            {editInterval ? (
+              <span>{'Edit group behaviour'}</span>
+            </Button>
+          )}
+
+          {editInterval && (
+            <div className={styles.flexRow}>
+              <div className={styles.evaluateLabel}>{`Alert rules in '${group}' are evaluated every`}</div>
+              <Field
+                className={styles.inlineField}
+                error={errors.evaluateEvery?.message}
+                invalid={!!errors.evaluateEvery}
+                validationMessageHorizontalOverflow={true}
+              >
+                <Input
+                  id={evaluateEveryId}
+                  width={8}
+                  {...register('evaluateEvery', evaluateEveryValidationOptions)}
+                  readOnly={!editInterval}
+                  onBlur={onBlur}
+                  className={styles.evaluateInput}
+                />
+              </Field>
+
               <span className={cx('text-warning', styles.evalEditingLabel)}>
                 {`You are updating evaluation interval for the group '${group}'`}
               </span>
-            ) : (
-              <Button
-                icon={editInterval ? 'exclamation-circle' : 'edit'}
-                type="button"
-                variant="secondary"
-                onClick={() => {
-                  setEditInterval(true);
-                }}
-              >
-                <span className={cx(editInterval && 'text-warning')}>{'Edit group behaviour'}</span>
-              </Button>
-            )}
-          </div>
+            </div>
+          )}
         </Card.Actions>
       </Card>
     </div>
@@ -405,7 +482,6 @@ export function GrafanaEvaluationBehavior({ initialFolder }: { initialFolder: Ru
         <EvaluationIntervalInput initialFolder={initialFolder} />
         <ForInput />
       </div>
-      {/* </Field> */}
       {exceedsGlobalEvaluationLimit && <EvaluationIntervalLimitExceeded />}
       <CollapseToggle
         isCollapsed={!showErrorHandling}
@@ -497,5 +573,12 @@ const getStyles = (theme: GrafanaTheme2) => ({
   `,
   cardContainer: css`
     max-width: ${theme.breakpoints.values.sm}px;
+  `,
+  intervalChangedLabel: css`
+    margin-bottom: ${theme.spacing(1)};
+  `,
+  warningIcon: css`
+    justify-self: center;
+    margin-right: ${theme.spacing(1)};
   `,
 });
