@@ -3,7 +3,7 @@ import React, { useMemo, useState } from 'react';
 import { Controller } from 'react-hook-form';
 import { useAsync } from 'react-use';
 
-import { getDataSourceSrv } from '@grafana/runtime';
+import { createQueryRunner, getDataSourceSrv } from '@grafana/runtime';
 import { Field, LoadingPlaceholder, Alert, Button, HorizontalGroup, Icon, useTheme2 } from '@grafana/ui';
 
 interface Props {
@@ -40,8 +40,17 @@ export const QueryEditorField = ({ dsUid, invalid, error, name }: Props) => {
   }, [dsUid]);
   const QueryEditor = datasource?.components?.QueryEditor;
 
-  const handleValidation = () => {
+  const handleValidation = (value) => {
     // trigger query
+    const runner = createQueryRunner();
+    runner.run({ datasource: datasource, queries: value });
+    // TODO: This is not relevant as the button will only be shown if there is a ds. How can I solve this?
+    //        TS2322: Type 'DataSourceApi<DataQuery, DataSourceJsonData, {}> | undefined' is not assignable to type
+    //        'DataSourceRef | DataSourceApi<DataQuery, DataSourceJsonData, {}> | null'.
+    //        Type 'undefined' is not assignable to type 'DataSourceRef | DataSourceApi<DataQuery, DataSourceJsonData, {}> | null'
+    // TODO: Check whether value works for queries?
+    // TODO: Do I need something like timeRange: "" in the object?
+    // runner.get() // maybe this as well => .subscribe()
     // filter result as we only need to know whether it was successful or not
     // if it was successful change state for isValidQuery to true
     setIsValidQuery(true);
@@ -74,11 +83,10 @@ export const QueryEditorField = ({ dsUid, invalid, error, name }: Props) => {
           if (!QueryEditor) {
             return <Alert title="Data source does not export a query editor."></Alert>;
           }
-
           return (
             <>
               <QueryEditor
-                onRunQuery={datasource.type === 'loki' || 'prometheus' ? handleValidation : () => {}}
+                onRunQuery={datasource.type === 'loki' || 'prometheus' ? () => handleValidation(value) : () => {}}
                 onChange={onChange}
                 datasource={datasource}
                 query={value}
@@ -93,7 +101,7 @@ export const QueryEditorField = ({ dsUid, invalid, error, name }: Props) => {
                     <Icon name="exclamation-triangle" /> This query is not valid.
                   </div>
                 )}
-                <Button variant="primary" icon={'check'} type="button" onClick={handleValidation}>
+                <Button variant="primary" icon={'check'} type="button" onClick={() => handleValidation(value)}>
                   Validate query
                 </Button>
               </HorizontalGroup>
