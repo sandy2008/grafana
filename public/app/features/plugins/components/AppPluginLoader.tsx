@@ -16,13 +16,12 @@ import { buildPluginPageContext, PluginPageContext } from './PluginPageContext';
 type AppPluginLoaderProps = {
   // The id of the app plugin to be loaded
   id: string;
-  navId: string;
   // The base URL path - defaults to the current path
   basePath?: string;
 };
 
 // This component can be used to render an app-plugin based on its plugin ID.
-export const AppPluginLoader = ({ id, navId, basePath }: AppPluginLoaderProps) => {
+export const AppPluginLoader = ({ id, basePath }: AppPluginLoaderProps) => {
   const [nav, setNav] = useState<NavModel | null>(null);
   const { value: plugin, error, loading } = useImportAppPlugin(id);
   const queryParams = useParams();
