@@ -81,7 +81,7 @@ func MustParseStr(str string) GRN {
 
 // String returns a string representation of a grn in the format
 // grn:tenantID:service:namespace:kind/resourceIdentifier
-func (g *GRN) String() string {
+func (g GRN) String() string {
 	tenant := ""
 	if g.TenantID > 0 {
 		tenant = fmt.Sprintf("%d", g.TenantID)

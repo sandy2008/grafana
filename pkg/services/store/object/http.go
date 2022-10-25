@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/grafana/grafana/pkg/infra/grn"
 	"github.com/grafana/grafana/pkg/infra/log"
 	"github.com/grafana/grafana/pkg/middleware"
 	"github.com/grafana/grafana/pkg/services/store/kind"
@@ -83,9 +84,14 @@ func parseRequestParams(req *http.Request) (uid string, kind string, params map[
 
 func (s *httpObjectStore) doGetObject(c *models.ReqContext) response.Response {
 	uid, kind, params := parseRequestParams(c.Req)
+	grn := grn.GRN{
+		TenantID:           c.OrgID,
+		ResourceKind:       kind,
+		ResourceIdentifier: uid,
+	}
+
 	rsp, err := s.store.Read(c.Req.Context(), &ReadObjectRequest{
-		UID:         uid,
-		Kind:        kind,
+		GRN:         grn.String(),
 		Version:     params["version"],           // ?version = XYZ
 		WithBody:    params["body"] != "false",   // default to true
 		WithSummary: params["summary"] == "true", // default to false
@@ -116,9 +122,13 @@ func (s *httpObjectStore) doGetObject(c *models.ReqContext) response.Response {
 
 func (s *httpObjectStore) doGetRawObject(c *models.ReqContext) response.Response {
 	uid, kind, params := parseRequestParams(c.Req)
+	grn := grn.GRN{
+		TenantID:           c.OrgID,
+		ResourceKind:       kind,
+		ResourceIdentifier: uid,
+	}
 	rsp, err := s.store.Read(c.Req.Context(), &ReadObjectRequest{
-		UID:         uid,
-		Kind:        kind,
+		GRN:         grn.String(),
 		Version:     params["version"], // ?version = XYZ
 		WithBody:    true,
 		WithSummary: false,
@@ -164,6 +174,11 @@ const MAX_UPLOAD_SIZE = 5 * 1024 * 1024 // 5MB
 
 func (s *httpObjectStore) doWriteObject(c *models.ReqContext) response.Response {
 	uid, kind, params := parseRequestParams(c.Req)
+	grn := grn.GRN{
+		TenantID:           c.OrgID,
+		ResourceKind:       kind,
+		ResourceIdentifier: uid,
+	}
 
 	// Cap the max size
 	c.Req.Body = http.MaxBytesReader(c.Resp, c.Req.Body, MAX_UPLOAD_SIZE)
@@ -173,8 +188,7 @@ func (s *httpObjectStore) doWriteObject(c *models.ReqContext) response.Response 
 	}
 
 	rsp, err := s.store.Write(c.Req.Context(), &WriteObjectRequest{
-		UID:             uid,
-		Kind:            kind,
+		GRN:             grn.String(),
 		Body:            b,
 		Comment:         params["comment"],
 		PreviousVersion: params["previousVersion"],
@@ -187,9 +201,14 @@ func (s *httpObjectStore) doWriteObject(c *models.ReqContext) response.Response 
 
 func (s *httpObjectStore) doDeleteObject(c *models.ReqContext) response.Response {
 	uid, kind, params := parseRequestParams(c.Req)
+	grn := grn.GRN{
+		TenantID:           c.OrgID,
+		ResourceKind:       kind,
+		ResourceIdentifier: uid,
+	}
+
 	rsp, err := s.store.Delete(c.Req.Context(), &DeleteObjectRequest{
-		UID:             uid,
-		Kind:            kind,
+		GRN:             grn.String(),
 		PreviousVersion: params["previousVersion"],
 	})
 	if err != nil {
@@ -200,10 +219,15 @@ func (s *httpObjectStore) doDeleteObject(c *models.ReqContext) response.Response
 
 func (s *httpObjectStore) doGetHistory(c *models.ReqContext) response.Response {
 	uid, kind, params := parseRequestParams(c.Req)
+	grn := grn.GRN{
+		TenantID:           c.OrgID,
+		ResourceKind:       kind,
+		ResourceIdentifier: uid,
+	}
+
 	limit := int64(20) // params
 	rsp, err := s.store.History(c.Req.Context(), &ObjectHistoryRequest{
-		UID:           uid,
-		Kind:          kind,
+		GRN:           grn.String(),
 		Limit:         limit,
 		NextPageToken: params["nextPageToken"],
 	})
@@ -243,6 +267,11 @@ func (s *httpObjectStore) doUpload(c *models.ReqContext) response.Response {
 			} else {
 				uid = fileHeader.Filename[:idx]
 			}
+			grn := grn.GRN{
+				TenantID:           c.OrgID,
+				ResourceKind:       kind.ID,
+				ResourceIdentifier: uid,
+			}
 
 			file, err := fileHeader.Open()
 			if err != nil {
@@ -263,8 +292,7 @@ func (s *httpObjectStore) doUpload(c *models.ReqContext) response.Response {
 			}
 
 			result, err := s.store.Write(c.Req.Context(), &WriteObjectRequest{
-				UID:     uid,
-				Kind:    kind.ID,
+				GRN:     grn.String(),
 				Body:    data,
 				Comment: message,
 				//	PreviousVersion: params["previousVersion"],

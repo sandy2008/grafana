@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/grafana/grafana/pkg/infra/grn"
 	"github.com/grafana/grafana/pkg/infra/log"
 	"github.com/grafana/grafana/pkg/infra/x/persistentcollection"
 	"github.com/grafana/grafana/pkg/services/grpcserver"
@@ -26,13 +27,14 @@ type ObjectVersionWithBody struct {
 }
 
 type RawObjectWithHistory struct {
+	GRN     grn.GRN                  `json:"grn"`
 	Object  *object.RawObject        `json:"object,omitempty"`
 	History []*ObjectVersionWithBody `json:"history,omitempty"`
 }
 
 var (
-	// increment when RawObject changes
-	rawObjectVersion = 6
+	// increment when RawObjectWithHistory changes
+	rawObjectVersion = 7
 )
 
 func ProvideDummyObjectServer(cfg *setting.Cfg, grpcServerProvider grpcserver.Provider, kinds kind.KindRegistry) object.ObjectStoreServer {
@@ -51,18 +53,18 @@ type dummyObjectServer struct {
 	kinds      kind.KindRegistry
 }
 
-func namespaceFromUID(uid string) string {
+func namespaceFromUID(grn grn.GRN) string {
 	// TODO
 	return "orgId-1"
 }
 
-func (i dummyObjectServer) findObject(ctx context.Context, uid string, kind string, version string) (*RawObjectWithHistory, *object.RawObject, error) {
-	if uid == "" {
+func (i dummyObjectServer) findObject(ctx context.Context, grn grn.GRN, version string) (*RawObjectWithHistory, *object.RawObject, error) {
+	if grn.ResourceIdentifier == "" {
 		return nil, nil, errors.New("UID must not be empty")
 	}
 
-	obj, err := i.collection.FindFirst(ctx, namespaceFromUID(uid), func(i *RawObjectWithHistory) (bool, error) {
-		return i.Object.UID == uid && i.Object.Kind == kind, nil
+	obj, err := i.collection.FindFirst(ctx, namespaceFromUID(grn), func(i *RawObjectWithHistory) (bool, error) {
+		return i.GRN == grn, nil
 	})
 
 	if err != nil {
@@ -102,7 +104,11 @@ func (i dummyObjectServer) findObject(ctx context.Context, uid string, kind stri
 }
 
 func (i dummyObjectServer) Read(ctx context.Context, r *object.ReadObjectRequest) (*object.ReadObjectResponse, error) {
-	_, objVersion, err := i.findObject(ctx, r.UID, r.Kind, r.Version)
+	grn, err := grn.ParseStr(r.GRN)
+	if err != nil {
+		return nil, err
+	}
+	_, objVersion, err := i.findObject(ctx, grn, r.Version)
 	if err != nil {
 		return nil, err
 	}
@@ -119,9 +125,9 @@ func (i dummyObjectServer) Read(ctx context.Context, r *object.ReadObjectRequest
 	}
 	if r.WithSummary {
 		// Since we do not store the summary, we can just recreate on demand
-		builder := i.kinds.GetSummaryBuilder(r.Kind)
+		builder := i.kinds.GetSummaryBuilder(grn.ResourceKind)
 		if builder != nil {
-			summary, _, e2 := builder(ctx, r.UID, objVersion.Body)
+			summary, _, e2 := builder(ctx, grn.ResourceIdentifier, objVersion.Body)
 			if e2 != nil {
 				return nil, e2
 			}
@@ -150,15 +156,18 @@ func createContentsHash(contents []byte) string {
 }
 
 func (i dummyObjectServer) update(ctx context.Context, r *object.WriteObjectRequest, namespace string) (*object.WriteObjectResponse, error) {
-	builder := i.kinds.GetSummaryBuilder(r.Kind)
+	grn, err := grn.ParseStr(r.GRN)
+	if err != nil {
+		return nil, err
+	}
+	builder := i.kinds.GetSummaryBuilder(grn.ResourceKind)
 	if builder == nil {
-		return nil, fmt.Errorf("unsupported kind: " + r.Kind)
+		return nil, fmt.Errorf("unsupported kind: " + grn.ResourceKind)
 	}
 	rsp := &object.WriteObjectResponse{}
 
 	updatedCount, err := i.collection.Update(ctx, namespace, func(i *RawObjectWithHistory) (bool, *RawObjectWithHistory, error) {
-		match := i.Object.UID == r.UID && i.Object.Kind == r.Kind
-		if !match {
+		if i.GRN != grn {
 			return false, nil, nil
 		}
 
@@ -174,8 +183,9 @@ func (i dummyObjectServer) update(ctx context.Context, r *object.WriteObjectRequ
 		modifier := store.UserFromContext(ctx)
 
 		updated := &object.RawObject{
-			UID:       r.UID,
-			Kind:      r.Kind,
+			GRN:       i.GRN.String(),
+			UID:       i.GRN.ResourceIdentifier,
+			Kind:      i.GRN.ResourceKind,
 			Created:   i.Object.Created,
 			CreatedBy: i.Object.CreatedBy,
 			Updated:   time.Now().Unix(),
@@ -218,7 +228,7 @@ func (i dummyObjectServer) update(ctx context.Context, r *object.WriteObjectRequ
 	}
 
 	if updatedCount == 0 && rsp.Object == nil {
-		return nil, fmt.Errorf("could not find object with uid %s and kind %s", r.UID, r.Kind)
+		return nil, fmt.Errorf("could not find object with uid %s and kind %s", r.GRN)
 	}
 
 	return rsp, nil
